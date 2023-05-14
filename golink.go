@@ -5,7 +5,6 @@
 package golink
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -17,22 +16,21 @@ import (
 	"fmt"
 	"html/template"
 	"io/fs"
-	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	texttemplate "text/template"
 	"time"
 
+	"github.com/joho/godotenv"
 	"golang.org/x/net/xsrftoken"
-	"tailscale.com/client/tailscale"
 	"tailscale.com/hostinfo"
 	"tailscale.com/ipn"
 	"tailscale.com/tsnet"
@@ -43,11 +41,8 @@ const defaultHostname = "go"
 var (
 	verbose           = flag.Bool("verbose", false, "be verbose")
 	controlURL        = flag.String("control-url", ipn.DefaultControlURL, "the URL base of the control plane (i.e. coordination server)")
-	sqlitefile        = flag.String("sqlitedb", "", "path of SQLite database to store links")
-	dev               = flag.String("dev-listen", "", "if non-empty, listen on this addr and run in dev mode; auto-set sqlitedb if empty and don't use tsnet")
-	snapshot          = flag.String("snapshot", "", "file path of snapshot file")
+	dev               = flag.String("dev-listen", "", "if non-empty, listen on this addr and run in dev mode")
 	hostname          = flag.String("hostname", defaultHostname, "service name")
-	resolveFromBackup = flag.String("resolve-from-backup", "", "resolve a link from snapshot file and exit")
 	allowUnknownUsers = flag.Bool("allow-unknown-users", false, "allow unknown users to save links")
 )
 
@@ -67,57 +62,23 @@ var LastSnapshot []byte
 var embeddedFS embed.FS
 
 // db stores short links.
-var db *SQLiteDB
-
-var localClient *tailscale.LocalClient
+var db Database
 
 func Run() error {
 	flag.Parse()
 
 	hostinfo.SetApp("golink")
 
-	// if resolving from backup, set sqlitefile and snapshot flags to
-	// restore links into an in-memory sqlite database.
-	if *resolveFromBackup != "" {
-		*sqlitefile = ":memory:"
-		snapshot = resolveFromBackup
-		if flag.NArg() != 1 {
-			log.Fatal("--resolve-from-backup also requires a link to be resolved")
-		}
-	}
-
-	if *sqlitefile == "" {
-		if devMode() {
-			tmpdir, err := ioutil.TempDir("", "golink_dev_*")
-			if err != nil {
-				return err
-			}
-			*sqlitefile = filepath.Join(tmpdir, "golink.db")
-			log.Printf("Dev mode temp db: %s", *sqlitefile)
-		} else {
-			return errors.New("--sqlitedb is required")
-		}
-	}
-
 	var err error
-	if db, err = NewSQLiteDB(*sqlitefile); err != nil {
-		return fmt.Errorf("NewSQLiteDB(%q): %w", *sqlitefile, err)
+	config, err := loadDBConfig()
+	if err != nil {
+		log.Panicf("Unable to boot up the service. %v", err)
 	}
 
-	if *snapshot != "" {
-		if LastSnapshot != nil {
-			log.Printf("LastSnapshot already set; ignoring --snapshot")
-		} else {
-			var err error
-			LastSnapshot, err = os.ReadFile(*snapshot)
-			if err != nil {
-				log.Fatalf("error reading snapshot file %q: %v", *snapshot, err)
-			}
-		}
+	if db, err = NewDB(config); err != nil {
+		return fmt.Errorf("NewDB(%s): %w", config.Host, err)
 	}
-	if err := restoreLastSnapshot(); err != nil {
-		log.Printf("restoring snapshot: %v", err)
-	}
+
 	if err := initStats(); err != nil {
 		log.Printf("initializing stats: %v", err)
 	}
@@ -174,7 +135,6 @@ func Run() error {
 	if err := srv.Start(); err != nil {
 		return err
 	}
-	localClient, _ = srv.LocalClient()
 
 	l80, err := srv.Listen("tcp", ":80")
 	if err != nil {
@@ -531,38 +491,34 @@ var currentUser = func(r *http.Request) (string, error) {
 	if devMode() {
 		return "foo@example.com", nil
 	}
-	whois, err := localClient.WhoIs(r.Context(), r.RemoteAddr)
-	if err != nil {
-		if *allowUnknownUsers {
-			// Don't report the error if we are allowing unknown users.
-			return "", nil
-		}
-		return "", err
-	}
-	return whois.UserProfile.LoginName, nil
+
+	// TODO: Add a non 'Tailscale' specific way to get the currently logged in user
+
+	return "", nil
 }
 
 // userExists returns whether a user exists with the specified login in the current tailnet.
 func userExists(ctx context.Context, login string) (bool, error) {
-	const userTaggedDevices = "tagged-devices" // owner of tagged devices
+	// const userTaggedDevices = "tagged-devices" // owner of tagged devices
 
 	if devMode() {
 		// in dev mode, just assume the user exists
 		return true, nil
 	}
-	st, err := localClient.Status(ctx)
-	if err != nil {
-		return false, err
-	}
-	for _, user := range st.User {
-		if user.LoginName == userTaggedDevices {
-			continue
-		}
-		if user.LoginName == login {
-			return true, nil
-		}
-	}
-	return false, nil
+	// st, err := localClient.Status(ctx)
+	// if err != nil {
+	// 	return false, err
+	// }
+	// for _, user := range st.User {
+	// 	if user.LoginName == userTaggedDevices {
+	// 		continue
+	// 	}
+	// 	if user.LoginName == login {
+	// 		return true, nil
+	// 	}
+	// }
+	// TODO: Properly match if the user exists based on non-tailscale logic
+	return true, nil
 }
 
 var reShortName = regexp.MustCompile(`^\w[\w\-\.]*$`)
@@ -669,6 +625,7 @@ func serveSave(w http.ResponseWriter, r *http.Request) {
 			Created: now,
 		}
 	}
+	link.ID = linkID(short)
 	link.Short = short
 	link.Long = long
 	link.LastEdit = now
@@ -711,35 +668,6 @@ func serveExport(w http.ResponseWriter, _ *http.Request) {
 	}
 }
 
-func restoreLastSnapshot() error {
-	bs := bufio.NewScanner(bytes.NewReader(LastSnapshot))
-	var restored int
-	for bs.Scan() {
-		link := new(Link)
-		if err := json.Unmarshal(bs.Bytes(), link); err != nil {
-			return err
-		}
-		if link.Short == "" {
-			continue
-		}
-		_, err := db.Load(link.Short)
-		if err == nil {
-			continue // exists
-		}
-		if err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return err
-		}
-		if err := db.Save(link); err != nil {
-			return err
-		}
-		restored++
-	}
-	if restored > 0 {
-		log.Printf("Restored %v links.", restored)
-	}
-	return bs.Err()
-}
-
 func resolveLink(link string) (string, error) {
 	// if link specified as "go/name", trim "go" prefix.
 	// Remainder will parse as URL with no scheme or host
@@ -760,4 +688,40 @@ func resolveLink(link string) (string, error) {
 		}
 	}
 	return dst, err
+}
+
+func loadDBConfig() (Config, error) {
+	config := Config{}
+	// load .env file
+	err := godotenv.Load(".env")
+	if err != nil {
+		log.Printf("Error loading .env file. %v\n", err)
+		return config, err
+	}
+
+	host := os.Getenv("DB_HOSTNAME")
+	username := os.Getenv("DB_USERNAME")
+	password := os.Getenv("DB_PASSWORD")
+	str_port := os.Getenv("DB_PORT")
+
+	if port, err := strconv.Atoi(str_port); err != nil {
+		log.Printf("DB_PORT must be a number. %v", err)
+		return config, err
+	} else {
+		config.Port = port
+	}
+
+	if len(strings.TrimSpace(host)) <= 0 {
+		return config, errors.New("DB_HOSTNAME must contain a non-empty string")
+	}
+
+	if len(strings.TrimSpace(username)) <= 0 {
+		return config, errors.New("DB_USERNAME must contain a non-empty string")
+	}
+
+	config.Host = host
+	config.Username = username
+	config.Password = password
+
+	return config, nil
 }
