@@ -1,14 +1,35 @@
+# :warning: IMPORTANT :warning:
+
+This is a fork of [Tailscale]'s original `go/links` implementation.
+
+## Reasoning for the fork
+
+The original code was relying on (obviously) a [`tailnet`] and a `SQLite` database. For personal reasons I needed the code to work on a DB agnostic way (for my specific usecase a `Postgres` DB).
+
+I introduced the [`gorm`] dependency to code the DB access without having to be tied to a specific DB driver.
+The tests had to be modified to support the new dependency and in order to properly accomplish this I also introduced [`sqlmock`] and [`mockgen`].
+
+On top of that I was not going to run the links inside a [`tailnet`], thus I removed the code that directly used it to detect users; the code still needs a generic (or more plugable) way of detecting the current user; but for my current use case this is enough.
+
+Below you'll find the original `README` up to the day of the fork.
+
+---
+
 # golink
 
 [![status: experimental](https://img.shields.io/badge/status-experimental-blue)](https://tailscale.com/kb/1167/release-stages/#experimental)
 
-golink is a private shortlink service for your [tailnet].
+golink is a private shortlink service for your [`tailnet`].
 It lets you create short, memorable links for the websites you and your team use most.
 If you're new to golink, learn more in our [announcement blog post](https://tailscale.com/blog/golink/).
 If you were looking for a SaaS go link service that doesn't use Tailscale,
 you might be thinking of [golinks.io](https://golinks.io) or [trot.to](http://trot.to)
 
-[tailnet]: https://tailscale.com/kb/1136/tailnet/
+[`tailnet`]: https://tailscale.com/kb/1136/tailnet/
+[`sqlmock`]: https://github.com/DATA-DOG/go-sqlmock
+[`mockgen`]: https://github.com/golang/mock/mockgen
+[`gorm`]: https://gorm.io/
+[tailscale]: https://tailscale.com
 
 ![Screenshot of golink home screen](screenshot.png)
 
