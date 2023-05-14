@@ -65,8 +65,6 @@ var embeddedFS embed.FS
 // db stores short links.
 var db Database
 
-// var localClient *tailscale.LocalClient
-
 func Run() error {
 	flag.Parse()
 
@@ -138,7 +136,6 @@ func Run() error {
 	if err := srv.Start(); err != nil {
 		return err
 	}
-	// localClient, _ = srv.LocalClient()
 
 	l80, err := srv.Listen("tcp", ":80")
 	if err != nil {
@@ -495,14 +492,9 @@ var currentUser = func(r *http.Request) (string, error) {
 	if devMode() {
 		return "foo@example.com", nil
 	}
-	// whois, err := localClient.WhoIs(r.Context(), r.RemoteAddr)
-	// if err != nil {
-	// 	if *allowUnknownUsers {
-	// 		// Don't report the error if we are allowing unknown users.
-	// 		return "", nil
-	// 	}
-	// 	return "", err
-	// }
+
+	// TODO: Add a non 'Tailscale' specific way to get the currently logged in user
+
 	return "", nil
 }
 
@@ -526,7 +518,8 @@ func userExists(ctx context.Context, login string) (bool, error) {
 	// 		return true, nil
 	// 	}
 	// }
-	return false, nil
+	// TODO: Properly match if the user exists based on non-tailscale logic
+	return true, nil
 }
 
 var reShortName = regexp.MustCompile(`^\w[\w\-\.]*$`)
