@@ -5,7 +5,6 @@
 package golink
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -667,35 +666,6 @@ func serveExport(w http.ResponseWriter, _ *http.Request) {
 			panic(http.ErrAbortHandler)
 		}
 	}
-}
-
-func restoreLastSnapshot() error {
-	bs := bufio.NewScanner(bytes.NewReader(LastSnapshot))
-	var restored int
-	for bs.Scan() {
-		link := new(Link)
-		if err := json.Unmarshal(bs.Bytes(), link); err != nil {
-			return err
-		}
-		if link.Short == "" {
-			continue
-		}
-		_, err := db.Load(link.Short)
-		if err == nil {
-			continue // exists
-		}
-		if err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return err
-		}
-		if err := db.Save(link); err != nil {
-			return err
-		}
-		restored++
-	}
-	if restored > 0 {
-		log.Printf("Restored %v links.", restored)
-	}
-	return bs.Err()
 }
 
 func resolveLink(link string) (string, error) {
