@@ -8,8 +8,8 @@ variable "aws_region" {
 variable "aws_account_name" {
   default = "dev"
 }
-variable "k8s_cluster" {
-  default = "dev"
+variable "cluster_name" {
+  default = "preprod"
 }
 
 variable "k8s_namespace" {
@@ -19,5 +19,23 @@ variable "k8s_namespace" {
 variable "container_port" {
   default = 80
 }
+variable "image_tag" {
+  default = "latest"
+}
+
+variable "db_name" {
+  default = "golinks"
+}
+
+variable "db_user" {
+  default = "golink-admin"
+}
+
+variable "max_retries" {
+  default = 5
+}
+
+
+
 
 

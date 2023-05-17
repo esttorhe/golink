@@ -26,24 +26,26 @@ try{
                 String k8sCluster = "tooling"
 
                 snapshotDB(dbFullName: 'tooling-main-core-cluster', auroraCluster: false)
+             
+                dockerTagPush(serviceName: serviceName)
 
-                // def pendingMigrations = dbSchemaResolvePendingJavaMigrations(
-                //     serviceName: serviceName,
-                //     k8sNamespace: k8sNamespace,
-                //     migrationPath: 'app/grails-app/conf/db/migration/schema/**',
-                //     passwordProperty: 'dataSource.password',
-                //     urlProperty: 'dataSource.url',
-                //     usernameProperty: 'dataSource.username',
-                // )
+                def pendingMigrations = dbSchemaResolvePendingJavaMigrations(
+                    serviceName: serviceName,
+                    k8sNamespace: k8sNamespace,
+                    migrationPath: 'infra/conf/db/schema/**',
+                    passwordProperty: 'dataSource.password',
+                    urlProperty: 'dataSource.url',
+                    usernameProperty: 'dataSource.username',
+                )
 
-                // javaSchemaMigration(
-                //     serviceName: serviceName,
-                //     k8sNamespace: k8sNamespace,
-                //     action: 'migrate',
-                //     passwordProperty: 'dataSource.password',
-                //     urlProperty: 'dataSource.url',
-                //     usernameProperty: 'dataSource.username',
-                // )
+                javaSchemaMigration(
+                    serviceName: serviceName,
+                    k8sNamespace: k8sNamespace,
+                    action: 'migrate',
+                    passwordProperty: 'dataSource.password',
+                    urlProperty: 'dataSource.url',
+                    usernameProperty: 'dataSource.username',
+                )
 
                 applyInfraAndDeploy(
                     account: "dev",
@@ -68,12 +70,12 @@ try{
                     maxWaitTimeSecs: deploymentValidationMaxWaitTimeSecs
                 )
 
-                // dbSchemaNotifySlack(
-                //     serviceName: serviceName,
-                //     dbName: dbName,
-                //     k8sNamespace: k8sNamespace,
-                //     migrationInfo: pendingMigrations,
-                // )
+                dbSchemaNotifySlack(
+                    serviceName: serviceName,
+                    dbName: dbName,
+                    k8sNamespace: k8sNamespace,
+                    migrationInfo: pendingMigrations,
+                )
             }
         }
 

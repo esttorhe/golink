@@ -696,7 +696,6 @@ func loadDBConfig() (Config, error) {
 	err := godotenv.Load(".env")
 	if err != nil {
 		log.Printf("Error loading .env file. %v\n", err)
-		return config, err
 	}
 
 	host := os.Getenv("DB_HOSTNAME")
