@@ -1,0 +1,93 @@
+String serviceName = "golink"
+String javaVersion = "jdk11"
+String region = "eu-central-1"
+String jenkinsBuildChannel = "jenkins-ci"
+String dbName = "tooling-main-golinks-cluster"
+
+def slaveResources = [
+    "dev": [
+        "dind": [requestCpu : '2', limitCpu : '2', requestMemory: '1Gi', limitMemory: '2Gi']
+    ]
+]
+
+try{
+    wrap([$class: 'MaskPasswordsBuildWrapper']) {
+        setProperties(numBuildKeep: "10")
+        notifyBuild(channel: jenkinsBuildChannel, buildStatus: 'STARTED-DEV')
+        renderPodTemplate(slaveResources: slaveResources, nodeSelector: "nodeType=jenkins-demand") {
+            node(POD_LABEL) {
+                infraSetup(account: 'dev', extraAccounts: ['dev'])
+
+                setupJava(javaVersion)
+
+                authCodeArtifact(profile: 'terraform-dev')
+
+                String k8sNamespace = "tooling"
+                String k8sCluster = "tooling"
+
+                snapshotDB(dbFullName: 'tooling-main-core-cluster', auroraCluster: false)
+
+                // def pendingMigrations = dbSchemaResolvePendingJavaMigrations(
+                //     serviceName: serviceName,
+                //     k8sNamespace: k8sNamespace,
+                //     migrationPath: 'app/grails-app/conf/db/migration/schema/**',
+                //     passwordProperty: 'dataSource.password',
+                //     urlProperty: 'dataSource.url',
+                //     usernameProperty: 'dataSource.username',
+                // )
+
+                // javaSchemaMigration(
+                //     serviceName: serviceName,
+                //     k8sNamespace: k8sNamespace,
+                //     action: 'migrate',
+                //     passwordProperty: 'dataSource.password',
+                //     urlProperty: 'dataSource.url',
+                //     usernameProperty: 'dataSource.username',
+                // )
+
+                applyInfraAndDeploy(
+                    account: "dev",
+                    region: region,
+                    environment: k8sNamespace,
+                    serviceName: serviceName,
+                    jenkinsBuildChannel: jenkinsBuildChannel,
+                    state: "backend",
+                    varFile: "tooling-${region}",
+                    annotateDeployment: true,
+                    requireConfirmations: false,
+                    doSnapshotCluster: false,
+                    dbName: dbName,
+                    pushDockerToECR: true,
+                    clusterK8s: k8sCluster,
+                    skipK8sValidation: true
+                )
+
+                validateDeployment(
+                    k8sNamespace: k8sNamespace,
+                    serviceName: serviceName,
+                    maxWaitTimeSecs: deploymentValidationMaxWaitTimeSecs
+                )
+
+                // dbSchemaNotifySlack(
+                //     serviceName: serviceName,
+                //     dbName: dbName,
+                //     k8sNamespace: k8sNamespace,
+                //     migrationInfo: pendingMigrations,
+                // )
+            }
+        }
+
+        notifyBuild(channel: jenkinsBuildChannel, buildStatus: currentBuild.result, message: "Duration: ${currentBuild.durationString}")
+    }
+} catch (e) {
+    catchAndTreatExceptions(
+        exceptionMessage: e,
+        jenkinsBuildChannel: jenkinsBuildChannel
+    )
+}
+
+def setupJava(version){
+    jdk = tool name: version
+    env.JAVA_HOME = "${jdk}"
+    echo "jdk installation path is: ${jdk}"
+}
